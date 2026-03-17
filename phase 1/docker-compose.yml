@@ -1,0 +1,102 @@
+version: "3.9"
+
+services:
+
+  # ── Ingestion FastAPI ────────────────────────────────────────────────────────
+  ingestion-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - redis
+      - qdrant
+      - mlflow
+    volumes:
+      - ./:/app
+    command: >
+      uvicorn ingestion.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 2
+      --log-level info
+
+  # ── Celery worker ─────────────────────────────────────────────────────────────
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - redis
+      - qdrant
+      - mlflow
+    volumes:
+      - ./:/app
+    command: >
+      celery -A ingestion.tasks.celery_app worker
+      --loglevel=info
+      --concurrency=4
+      --queues=celery
+    deploy:
+      replicas: 2   # scale horizontally for bulk ingest
+
+  # ── Celery Flower (monitoring) ────────────────────────────────────────────────
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingestion
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    command: >
+      celery -A ingestion.tasks.celery_app flower
+      --port=5555
+      --broker=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+  # ── Qdrant ───────────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.9.1
+    ports:
+      - "6333:6333"
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # ── MLflow ───────────────────────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.14.1
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+
+volumes:
+  qdrant_data:
+  mlflow_data:

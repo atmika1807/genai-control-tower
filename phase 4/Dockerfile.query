@@ -1,0 +1,52 @@
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install \
+    sentence-transformers==3.0.1 \
+    rank-bm25==0.2.2
+
+# Pre-download cross-encoder model into the image layer
+RUN PYTHONPATH=/install/lib/python3.12/site-packages \
+    python -c "from sentence_transformers import CrossEncoder; \
+               CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+WORKDIR /app
+
+COPY --from=builder /install /usr/local
+# Copy cached model weights from builder
+COPY --from=builder /root/.cache/huggingface /root/.cache/huggingface
+
+COPY query/  ./query/
+COPY shared/ ./shared/
+
+HEALTHCHECK --interval=30s --timeout=8s --start-period=30s --retries=3 \
+  CMD python -c "import httpx; httpx.get('http://localhost:8001/v1/health',timeout=7).raise_for_status()" \
+  || exit 1
+
+USER appuser
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
+
+EXPOSE 8001
+
+# workers=1 — CrossEncoder model is not fork-safe with multiple workers
+CMD ["uvicorn", "query.main:app", \
+     "--host", "0.0.0.0", "--port", "8001", \
+     "--workers", "1", "--log-level", "info"]

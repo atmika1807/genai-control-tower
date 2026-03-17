@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# sentence-transformers pulls torch — install separately to cache the layer
+COPY requirements.txt requirements-query.txt* ./
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+    sentence-transformers==3.0.1 \
+    rank-bm25==0.2.2
+
+# Pre-download the cross-encoder model into the image layer
+# so cold-start doesn't hit the network at runtime
+RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+
+COPY . .
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1

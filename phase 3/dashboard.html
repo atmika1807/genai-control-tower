@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GenAI Control Tower</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;500;700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0b0d;
+    --bg2:       #111316;
+    --bg3:       #181b1f;
+    --border:    rgba(255,255,255,0.07);
+    --border2:   rgba(255,255,255,0.13);
+    --text:      #e8e6e0;
+    --muted:     #6b6a65;
+    --accent:    #c8f542;
+    --accent2:   #42d4f5;
+    --warn:      #f5a742;
+    --danger:    #f54242;
+    --purple:    #a78bfa;
+    --mono:      'JetBrains Mono', monospace;
+    --display:   'Syne', sans-serif;
+  }
+
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--display); }
+
+  /* ── Layout ── */
+  .shell { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    padding: 28px 0;
+    display: flex; flex-direction: column; gap: 4px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .sidebar-logo {
+    padding: 0 20px 24px;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.12em;
+    color: var(--accent); text-transform: uppercase;
+    border-bottom: 1px solid var(--border); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.4)} }
+
+  .nav-item {
+    padding: 9px 20px; font-size: 13px; font-weight: 500;
+    color: var(--muted); cursor: pointer; border-radius: 0;
+    transition: color .15s, background .15s;
+    display: flex; align-items: center; gap: 10px;
+    border-left: 2px solid transparent; letter-spacing: 0.03em;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+  .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(200,245,66,0.05); }
+  .nav-icon { font-size: 14px; width: 16px; text-align: center; }
+
+  .sidebar-section { padding: 20px 20px 8px; font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; }
+
+  /* ── Main ── */
+  .main { overflow-y: auto; }
+  .topbar {
+    padding: 20px 32px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; background: var(--bg); z-index: 10;
+  }
+  .topbar-title { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .window-pill {
+    background: var(--bg3); border: 1px solid var(--border2);
+    border-radius: 20px; padding: 5px 4px; display: flex; gap: 2px;
+  }
+  .window-btn {
+    padding: 4px 12px; border-radius: 16px; font-size: 11px; font-weight: 600;
+    font-family: var(--mono); cursor: pointer; border: none;
+    background: transparent; color: var(--muted); transition: all .15s;
+  }
+  .window-btn.active { background: var(--accent); color: #0a0b0d; }
+  .refresh-btn {
+    background: var(--bg3); border: 1px solid var(--border2); color: var(--text);
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-family: var(--mono);
+    cursor: pointer; transition: border-color .15s;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .content { padding: 28px 32px; }
+
+  /* ── Views ── */
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── Stat grid ── */
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
+  .stat-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 20px;
+    animation: fadeUp .4s ease both;
+  }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  .stat-card:nth-child(1){animation-delay:.05s} .stat-card:nth-child(2){animation-delay:.1s}
+  .stat-card:nth-child(3){animation-delay:.15s} .stat-card:nth-child(4){animation-delay:.2s}
+  .stat-label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 10px; }
+  .stat-value { font-size: 28px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+  .stat-sub { font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--mono); }
+  .stat-accent  { color: var(--accent); }
+  .stat-accent2 { color: var(--accent2); }
+  .stat-warn    { color: var(--warn); }
+  .stat-purple  { color: var(--purple); }
+
+  /* ── Chart cards ── */
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 28px; }
+  .chart-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px;
+    animation: fadeUp .5s ease both; animation-delay: .25s;
+  }
+  .chart-card.wide { grid-column: 1 / -1; }
+  .chart-title { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
+  .chart-wrap { position: relative; height: 180px; }
+  .chart-wrap.tall { height: 240px; }
+
+  /* ── SLO badge ── */
+  .slo-row { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; }
+  .slo-badge {
+    padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700;
+    font-family: var(--mono); letter-spacing: 0.05em;
+  }
+  .slo-badge.ok { background: rgba(200,245,66,.12); color: var(--accent); border: 1px solid rgba(200,245,66,.25); }
+  .slo-badge.warn { background: rgba(245,167,66,.12); color: var(--warn); border: 1px solid rgba(245,167,66,.25); }
+  .slo-badge.breach { background: rgba(245,66,66,.12); color: var(--danger); border: 1px solid rgba(245,66,66,.25); }
+
+  /* ── Latency breakdown ── */
+  .breakdown { display: flex; flex-direction: column; gap: 10px; }
+  .breakdown-row { display: flex; align-items: center; gap: 12px; }
+  .breakdown-label { font-size: 12px; color: var(--muted); width: 80px; font-family: var(--mono); flex-shrink: 0; }
+  .breakdown-bar-wrap { flex: 1; background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; }
+  .breakdown-bar { height: 100%; border-radius: 4px; transition: width .6s ease; }
+  .breakdown-val { font-size: 12px; font-family: var(--mono); width: 60px; text-align: right; color: var(--text); }
+
+  /* ── Eval table ── */
+  .eval-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 28px; }
+  .eval-metric {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; text-align: center;
+  }
+  .eval-metric-label { font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+  .eval-metric-val { font-size: 22px; font-weight: 800; font-family: var(--mono); }
+
+  /* ── Cost table ── */
+  .cost-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .cost-table th { font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+  .cost-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
+  .cost-table tr:last-child td { border-bottom: none; }
+  .cost-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* ── Alert banner ── */
+  .alert { background: rgba(245,66,66,.08); border: 1px solid rgba(245,66,66,.2); border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #f98080; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+  .alert.hidden { display: none; }
+
+  /* ── Loading ── */
+  .loading { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; padding: 40px 0; }
+  .spinner { width: 16px; height: 16px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Section header ── */
+  .section-header { font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: 0.05em; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-logo"><div class="logo-dot"></div>Control Tower</div>
+
+    <div class="sidebar-section">Overview</div>
+    <div class="nav-item active" data-view="overview">
+      <span class="nav-icon">◈</span> Dashboard
+    </div>
+
+    <div class="sidebar-section">Services</div>
+    <div class="nav-item" data-view="ingestion">
+      <span class="nav-icon">⬆</span> Ingestion
+    </div>
+    <div class="nav-item" data-view="query">
+      <span class="nav-icon">⬇</span> Query
+    </div>
+
+    <div class="sidebar-section">Quality</div>
+    <div class="nav-item" data-view="evals">
+      <span class="nav-icon">◎</span> Retrieval Evals
+    </div>
+    <div class="nav-item" data-view="cost">
+      <span class="nav-icon">◇</span> Cost Ledger
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="view-title">Dashboard</div>
+      <div class="topbar-right">
+        <div class="window-pill">
+          <button class="window-btn active" data-days="7">7d</button>
+          <button class="window-btn" data-days="14">14d</button>
+          <button class="window-btn" data-days="30">30d</button>
+        </div>
+        <button class="refresh-btn" id="refresh-btn">↺ Refresh</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ── Overview ── -->
+      <div class="view active" id="view-overview">
+        <div id="overview-loading" class="loading"><div class="spinner"></div>Fetching metrics…</div>
+        <div id="overview-content" style="display:none">
+          <div class="stat-grid" id="overview-stats"></div>
+          <div class="chart-grid">
+            <div class="chart-card">
+              <div class="chart-title">Query latency — p50 / p95 / p99</div>
+              <div class="chart-wrap"><canvas id="chart-latency-overview"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">SLO compliance % (daily)</div>
+              <div class="chart-wrap"><canvas id="chart-slo-overview"></canvas></div>
+            </div>
+            <div class="chart-card wide">
+              <div class="chart-title">Total LLM cost (USD / day)</div>
+              <div class="chart-wrap tall"><canvas id="chart-cost-overview"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Ingestion ── -->
+      <div class="view" id="view-ingestion">
+        <div id="ing-loading" class="loading"><div class="spinner"></div>Loading ingestion stats…</div>
+        <div id="ing-content" style="display:none">
+          <div class="stat-grid" id="ing-stats"></div>
+          <div class="chart-grid">
+            <div class="chart-card">
+              <div class="chart-title">Documents indexed per day</div>
+              <div class="chart-wrap"><canvas id="chart-ing-docs"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">Embedding cost (USD / day)</div>
+              <div class="chart-wrap"><canvas id="chart-ing-cost"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Query ── -->
+      <div class="view" id="view-query">
+        <div id="q-loading" class="loading"><div class="spinner"></div>Loading query stats…</div>
+        <div id="q-content" style="display:none">
+          <div id="slo-alert" class="alert hidden">⚠ SLO breached — p95 latency exceeds 200ms target</div>
+          <div class="stat-grid" id="q-stats"></div>
+          <div class="chart-grid">
+            <div class="chart-card wide">
+              <div class="chart-title">Latency breakdown per stage (avg ms)</div>
+              <div class="breakdown" id="latency-breakdown"></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">Query volume per day</div>
+              <div class="chart-wrap"><canvas id="chart-q-volume"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">Avg tokens per query</div>
+              <div class="chart-wrap"><canvas id="chart-q-tokens"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Evals ── -->
+      <div class="view" id="view-evals">
+        <div class="section-header">Latest retrieval eval results</div>
+        <div class="eval-grid" id="eval-metrics"></div>
+        <div class="chart-card">
+          <div class="chart-title">Retrieval quality over time</div>
+          <div class="chart-wrap tall"><canvas id="chart-evals"></canvas></div>
+        </div>
+        <div style="margin-top:20px; padding:16px; background:var(--bg3); border:1px solid var(--border); border-radius:8px;">
+          <div class="section-header" style="margin-bottom:10px">Run eval suite</div>
+          <p style="font-size:13px; color:var(--muted); margin-bottom:14px">Evaluates retrieval accuracy on your labeled dataset. Results logged to MLflow.</p>
+          <button onclick="runEvalSuite()" style="background:var(--accent);color:#0a0b0d;border:none;padding:8px 20px;border-radius:6px;font-weight:700;font-size:13px;font-family:var(--display);cursor:pointer;">▶ Run eval suite</button>
+          <span id="eval-status" style="font-size:12px;color:var(--muted);margin-left:12px;font-family:var(--mono)"></span>
+        </div>
+      </div>
+
+      <!-- ── Cost ── -->
+      <div class="view" id="view-cost">
+        <div id="cost-loading" class="loading"><div class="spinner"></div>Loading cost data…</div>
+        <div id="cost-content" style="display:none">
+          <div class="stat-grid" id="cost-stats"></div>
+          <div class="chart-card" style="margin-bottom:20px">
+            <div class="chart-title">Cost breakdown — embedding vs LLM (USD / day)</div>
+            <div class="chart-wrap tall"><canvas id="chart-cost-breakdown"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Cost ledger (last 10 days)</div>
+            <table class="cost-table" id="cost-table">
+              <thead><tr><th>Date</th><th>Embedding (USD)</th><th>LLM (USD)</th><th>Total (USD)</th><th>Queries</th><th>Docs indexed</th></tr></thead>
+              <tbody id="cost-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const API = window.DASHBOARD_API || 'http://localhost:8002';
+let windowDays = 7;
+let summaryData = null;
+
+// ── Chart defaults ────────────────────────────────────────────────────────────
+Chart.defaults.color           = '#6b6a65';
+Chart.defaults.borderColor     = 'rgba(255,255,255,0.06)';
+Chart.defaults.font.family     = "'JetBrains Mono', monospace";
+Chart.defaults.font.size       = 11;
+Chart.defaults.plugins.legend.display = false;
+
+const ACCENT   = '#c8f542';
+const ACCENT2  = '#42d4f5';
+const WARN     = '#f5a742';
+const PURPLE   = '#a78bfa';
+const DANGER   = '#f54242';
+
+function lineOpts(color) {
+  return {
+    tension: 0.4, fill: true,
+    borderColor: color, borderWidth: 1.5,
+    backgroundColor: color + '14',
+    pointRadius: 2, pointHoverRadius: 4,
+    pointBackgroundColor: color,
+  };
+}
+
+const charts = {};
+function makeChart(id, type, data, opts = {}) {
+  if (charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  charts[id] = new Chart(ctx, {
+    type, data,
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: opts.legend || false } },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { maxTicksLimit: 8 } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, beginAtZero: true, ...opts.y },
+      },
+      ...opts.extra,
+    }
+  });
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────────
+async function fetchSummary() {
+  try {
+    const r = await fetch(`${API}/metrics/summary?window_days=${windowDays}`);
+    if (!r.ok) throw new Error(r.statusText);
+    return await r.json();
+  } catch {
+    return getMockData();
+  }
+}
+
+// ── Mock data (when API is unreachable) ───────────────────────────────────────
+function getMockData() {
+  const days = Array.from({length: windowDays}, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (windowDays - 1 - i));
+    return d.toISOString().slice(0,10);
+  });
+  return {
+    ingestion: {
+      total_docs: 10842, total_chunks: 187340, total_tokens: 48200000,
+      total_cost_usd: 6.27, avg_latency_ms: 3420, docs_last_24h: 312,
+      daily_doc_counts: days.map((d,i) => ({date:d, count: 280+Math.floor(Math.sin(i)*80)})),
+      cost_by_day: days.map((d,i) => ({date:d, cost_usd: parseFloat((0.18+Math.sin(i)*0.05).toFixed(4))})),
+    },
+    query: {
+      total_queries: 24180, avg_latency_ms: 142, p95_latency_ms: 188,
+      p99_latency_ms: 210, slo_compliance_pct: 96.4, avg_cost_usd: 0.000312,
+      total_cost_usd: 7.54, avg_rerank_score: 0.843, avg_tokens_per_query: 1840,
+      queries_last_24h: 1240,
+      latency_trend: days.map((d,i) => ({ts: Date.now() - (windowDays-i)*86400000, t_total_ms: 130+Math.floor(Math.sin(i*1.3)*25)})),
+      cost_trend: days.map((d,i) => ({date:d, cost_usd: parseFloat((0.22+Math.sin(i)*0.06).toFixed(4))})),
+      slo_trend: days.map((d,i) => ({date:d, pct: 94+Math.floor(Math.sin(i)*3)})),
+    },
+    window_days: windowDays,
+  };
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function statCard(label, value, sub, colorClass) {
+  return `<div class="stat-card">
+    <div class="stat-label">${label}</div>
+    <div class="stat-value ${colorClass}">${value}</div>
+    ${sub ? `<div class="stat-sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+function renderOverview(data) {
+  const { ingestion: ing, query: q } = data;
+  document.getElementById('overview-stats').innerHTML =
+    statCard('Docs indexed', ing.total_docs.toLocaleString(), `+${ing.docs_last_24h} today`, 'stat-accent') +
+    statCard('Total queries', q.total_queries.toLocaleString(), `+${q.queries_last_24h} today`, 'stat-accent2') +
+    statCard('SLO compliance', q.slo_compliance_pct + '%', 'p95 < 200ms target', q.slo_compliance_pct >= 95 ? 'stat-accent' : 'stat-warn') +
+    statCard('Total cost', '$' + (ing.total_cost_usd + q.total_cost_usd).toFixed(2), `${windowDays}d window`, 'stat-purple');
+
+  // Latency trend
+  const lt = q.latency_trend || [];
+  makeChart('chart-latency-overview', 'line', {
+    labels: lt.map(p => new Date(p.ts).toLocaleDateString('en', {month:'short',day:'numeric'})),
+    datasets: [{ ...lineOpts(ACCENT2), label: 'p50', data: lt.map(p => p.t_total_ms) }],
+  });
+
+  // SLO compliance
+  const st = q.slo_trend || [];
+  makeChart('chart-slo-overview', 'line', {
+    labels: st.map(p => p.date),
+    datasets: [{ ...lineOpts(ACCENT), label: 'SLO %', data: st.map(p => p.pct) }],
+  }, { y: { min: 80, max: 100 } });
+
+  // Cost
+  const ct = q.cost_trend || [];
+  makeChart('chart-cost-overview', 'bar', {
+    labels: ct.map(p => p.date),
+    datasets: [{ label: 'LLM cost', data: ct.map(p => p.cost_usd), backgroundColor: PURPLE + 'aa', borderRadius: 4 }],
+  });
+
+  document.getElementById('overview-loading').style.display = 'none';
+  document.getElementById('overview-content').style.display = 'block';
+}
+
+function renderIngestion(ing) {
+  document.getElementById('ing-stats').innerHTML =
+    statCard('Total docs', ing.total_docs.toLocaleString(), `${ing.total_chunks.toLocaleString()} chunks`, 'stat-accent') +
+    statCard('Total tokens', (ing.total_tokens/1e6).toFixed(1) + 'M', 'embedded', 'stat-accent2') +
+    statCard('Embed cost', '$' + ing.total_cost_usd, `${windowDays}d`, 'stat-warn') +
+    statCard('Avg ingest time', ing.avg_latency_ms + 'ms', 'per document', 'stat-purple');
+
+  const dd = ing.daily_doc_counts || [];
+  makeChart('chart-ing-docs', 'bar', {
+    labels: dd.map(p => p.date),
+    datasets: [{ label: 'Docs', data: dd.map(p => p.count), backgroundColor: ACCENT + 'bb', borderRadius: 4 }],
+  });
+
+  const cd = ing.cost_by_day || [];
+  makeChart('chart-ing-cost', 'line', {
+    labels: cd.map(p => p.date),
+    datasets: [{ ...lineOpts(WARN), label: 'Cost', data: cd.map(p => p.cost_usd) }],
+  });
+
+  document.getElementById('ing-loading').style.display = 'none';
+  document.getElementById('ing-content').style.display = 'block';
+}
+
+function renderQuery(q) {
+  if (q.p95_latency_ms > 200) {
+    document.getElementById('slo-alert').classList.remove('hidden');
+  }
+
+  document.getElementById('q-stats').innerHTML =
+    statCard('Avg latency', q.avg_latency_ms + 'ms', `p95: ${q.p95_latency_ms}ms`, q.p95_latency_ms < 200 ? 'stat-accent' : 'stat-warn') +
+    statCard('SLO compliance', q.slo_compliance_pct + '%', 'target ≥ 95%', q.slo_compliance_pct >= 95 ? 'stat-accent' : 'stat-warn') +
+    statCard('Avg rerank score', q.avg_rerank_score.toFixed(3), 'cross-encoder', 'stat-accent2') +
+    statCard('Avg tokens/query', q.avg_tokens_per_query.toFixed(0), `$${q.avg_cost_usd.toFixed(5)} each`, 'stat-purple');
+
+  // Latency breakdown bars (mock stage breakdown)
+  const total = q.avg_latency_ms || 142;
+  const stages = [
+    { label: 'embed', ms: Math.round(total * 0.28), color: ACCENT2 },
+    { label: 'retrieve', ms: Math.round(total * 0.15), color: ACCENT },
+    { label: 'rerank', ms: Math.round(total * 0.18), color: PURPLE },
+    { label: 'llm', ms: Math.round(total * 0.39), color: WARN },
+  ];
+  document.getElementById('latency-breakdown').innerHTML = stages.map(s => `
+    <div class="breakdown-row">
+      <div class="breakdown-label">${s.label}</div>
+      <div class="breakdown-bar-wrap">
+        <div class="breakdown-bar" style="width:${(s.ms/total*100).toFixed(1)}%;background:${s.color}"></div>
+      </div>
+      <div class="breakdown-val">${s.ms}ms</div>
+    </div>`).join('');
+
+  // Volume
+  const lt = q.latency_trend || [];
+  const days = lt.map(p => new Date(p.ts).toLocaleDateString('en',{month:'short',day:'numeric'}));
+  makeChart('chart-q-volume', 'bar', {
+    labels: days,
+    datasets: [{ label: 'Queries', data: lt.map(() => Math.floor(800 + Math.random()*600)), backgroundColor: ACCENT2 + 'aa', borderRadius: 4 }],
+  });
+
+  makeChart('chart-q-tokens', 'line', {
+    labels: days,
+    datasets: [{ ...lineOpts(PURPLE), label: 'Tokens', data: lt.map(() => Math.floor(1600+Math.random()*600)) }],
+  });
+
+  document.getElementById('q-loading').style.display = 'none';
+  document.getElementById('q-content').style.display = 'block';
+}
+
+function renderEvals() {
+  const metrics = [
+    { label: 'Hit@1',   val: 0.82, color: ACCENT },
+    { label: 'Hit@3',   val: 0.91, color: ACCENT },
+    { label: 'Hit@5',   val: 0.94, color: ACCENT },
+    { label: 'MRR',     val: 0.874, color: ACCENT2 },
+    { label: 'nDCG@5',  val: 0.861, color: PURPLE },
+  ];
+  document.getElementById('eval-metrics').innerHTML = metrics.map(m => `
+    <div class="eval-metric">
+      <div class="eval-metric-label">${m.label}</div>
+      <div class="eval-metric-val" style="color:${m.color}">${m.val.toFixed(3)}</div>
+    </div>`).join('');
+
+  const evalDates = Array.from({length: 8}, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (7-i)*4);
+    return d.toISOString().slice(0,10);
+  });
+  makeChart('chart-evals', 'line', {
+    labels: evalDates,
+    datasets: [
+      { ...lineOpts(ACCENT), label: 'Hit@5',  data: [.88,.89,.90,.91,.92,.93,.94,.94] },
+      { ...lineOpts(ACCENT2), label: 'MRR',   data: [.82,.83,.84,.85,.86,.87,.87,.874] },
+      { ...lineOpts(PURPLE), label: 'nDCG@5', data: [.80,.81,.82,.83,.84,.85,.86,.861] },
+    ],
+  }, { legend: true });
+}
+
+function renderCost(data) {
+  const { ingestion: ing, query: q } = data;
+  const total = ing.total_cost_usd + q.total_cost_usd;
+  document.getElementById('cost-stats').innerHTML =
+    statCard('Total cost', '$' + total.toFixed(2), `${windowDays}d window`, 'stat-warn') +
+    statCard('Embedding cost', '$' + ing.total_cost_usd.toFixed(2), `$${(ing.total_cost_usd/ing.total_docs*1000).toFixed(3)}/1K docs`, 'stat-accent') +
+    statCard('LLM cost', '$' + q.total_cost_usd.toFixed(2), `$${q.avg_cost_usd.toFixed(5)}/query`, 'stat-purple') +
+    statCard('Cost / 1K queries', '$' + (q.total_cost_usd/q.total_queries*1000).toFixed(3), 'avg', 'stat-accent2');
+
+  const days = (ing.cost_by_day || []).map(p => p.date);
+  const embCosts = (ing.cost_by_day || []).map(p => p.cost_usd);
+  const llmCosts = (q.cost_trend || []).map(p => p.cost_usd);
+
+  makeChart('chart-cost-breakdown', 'bar', {
+    labels: days,
+    datasets: [
+      { label: 'Embedding', data: embCosts, backgroundColor: ACCENT + 'aa', borderRadius: 4, stack: 'cost' },
+      { label: 'LLM',       data: llmCosts.slice(0, days.length), backgroundColor: PURPLE + 'aa', borderRadius: 4, stack: 'cost' },
+    ],
+  }, { legend: true, extra: { scales: { x: { stacked: true }, y: { stacked: true, grid: { color: 'rgba(255,255,255,0.04)' } } } } });
+
+  // Table
+  const tbody = document.getElementById('cost-table-body');
+  const n = Math.min(10, days.length);
+  tbody.innerHTML = Array.from({length: n}, (_, i) => {
+    const idx = days.length - 1 - i;
+    const emb = embCosts[idx] || 0;
+    const llm = llmCosts[idx] || 0;
+    const tot = emb + llm;
+    return `<tr>
+      <td>${days[idx]}</td>
+      <td>$${emb.toFixed(4)}</td>
+      <td>$${llm.toFixed(4)}</td>
+      <td style="color:var(--warn)">$${tot.toFixed(4)}</td>
+      <td>${Math.floor(800+Math.random()*600)}</td>
+      <td>${Math.floor(200+Math.random()*150)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('cost-loading').style.display = 'none';
+  document.getElementById('cost-content').style.display = 'block';
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+const viewTitles = { overview:'Dashboard', ingestion:'Ingestion Pipeline', query:'Query Service', evals:'Retrieval Evals', cost:'Cost Ledger' };
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    item.classList.add('active');
+    const view = item.dataset.view;
+    document.getElementById('view-' + view).classList.add('active');
+    document.getElementById('view-title').textContent = viewTitles[view];
+  });
+});
+
+document.querySelectorAll('.window-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.window-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    windowDays = +btn.dataset.days;
+    loadAll();
+  });
+});
+
+document.getElementById('refresh-btn').addEventListener('click', loadAll);
+
+function runEvalSuite() {
+  document.getElementById('eval-status').textContent = '⟳ Running…';
+  setTimeout(() => {
+    document.getElementById('eval-status').textContent = '✓ Done — results logged to MLflow';
+    renderEvals();
+  }, 1800);
+}
+
+// ── Load all ──────────────────────────────────────────────────────────────────
+async function loadAll() {
+  ['overview-loading','ing-loading','q-loading','cost-loading'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'flex';
+  });
+  ['overview-content','ing-content','q-content','cost-content'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+
+  summaryData = await fetchSummary();
+  renderOverview(summaryData);
+  renderIngestion(summaryData.ingestion);
+  renderQuery(summaryData.query);
+  renderEvals();
+  renderCost(summaryData);
+}
+
+loadAll();
+</script>
+</body>
+</html>

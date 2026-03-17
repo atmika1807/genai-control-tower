@@ -1,0 +1,174 @@
+version: "3.9"
+
+x-common-env: &common-env
+  OPENAI_API_KEY:       ${OPENAI_API_KEY}
+  REDIS_URL:            redis://redis:6379/0
+  QDRANT_URL:           http://qdrant:6333
+  MLFLOW_TRACKING_URI:  http://mlflow:5000
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+
+  ingestion-api:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    image: genai-ingestion:latest
+    ports: ["8000:8000"]
+    environment: { <<: *common-env }
+    depends_on:
+      redis:  { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+    <<: [*restart, *logging]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+    healthcheck:
+      test: ["CMD","python","-c","import httpx;httpx.get('http://localhost:8000/health',timeout=4).raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  ingestion-worker-high:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    image: genai-ingestion:latest
+    environment: { <<: *common-env }
+    depends_on:
+      redis:  { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+    command: >
+      celery -A ingestion.tasks.celery_app worker
+      --loglevel=info --concurrency=2
+      --queues=high,celery --hostname=worker-high@%h
+    <<: [*restart, *logging]
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+
+  ingestion-worker-default:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    image: genai-ingestion:latest
+    environment: { <<: *common-env }
+    depends_on:
+      redis:  { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+    command: >
+      celery -A ingestion.tasks.celery_app worker
+      --loglevel=info --concurrency=4
+      --queues=celery,dead_letter --hostname=worker-default@%h
+    <<: [*restart, *logging]
+    deploy:
+      replicas: 2
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+
+  celery-beat:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    image: genai-ingestion:latest
+    environment: { <<: *common-env }
+    depends_on: [redis]
+    command: celery -A ingestion.tasks.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    <<: [*restart, *logging]
+
+  flower:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    image: genai-ingestion:latest
+    ports: ["5555:5555"]
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+    command: >
+      celery -A ingestion.tasks.celery_app flower --port=5555
+      --broker=redis://redis:6379/0
+      --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-changeme}
+    depends_on: [redis]
+    <<: *restart
+
+  query-api:
+    build: { context: ., dockerfile: Dockerfile.query, target: runtime }
+    image: genai-query:latest
+    ports: ["8001:8001"]
+    environment:
+      <<: *common-env
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o}
+      RERANKER_DEVICE: cpu
+    depends_on:
+      qdrant: { condition: service_healthy }
+    <<: [*restart, *logging]
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+    healthcheck:
+      test: ["CMD","python","-c","import httpx;httpx.get('http://localhost:8001/v1/health',timeout=7).raise_for_status()"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+
+  dashboard-api:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    ports: ["8002:8002"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    command: uvicorn observability.dashboard_api:app --host 0.0.0.0 --port 8002 --workers 1
+    depends_on: [mlflow]
+    <<: *restart
+
+  slo-tracker:
+    build: { context: ., dockerfile: Dockerfile.ingestion, target: runtime }
+    environment:
+      DASHBOARD_API:     http://dashboard-api:8002
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLO_POLL_INTERVAL: "300"
+    command: python -m observability.slo_tracker
+    depends_on: [dashboard-api]
+    <<: [*restart, *logging]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: >
+      redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+      --save 60 1000 --appendonly yes
+    volumes: [redis_data:/data]
+    <<: *restart
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.1
+    ports: ["6333:6333","6334:6334"]
+    volumes: [qdrant_data:/qdrant/storage]
+    <<: *restart
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:6333/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { memory: 4G }
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.14.1
+    ports: ["5000:5000"]
+    volumes: [mlflow_data:/mlflow]
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    <<: *restart
+
+volumes:
+  qdrant_data:
+  mlflow_data:
+  redis_data:
